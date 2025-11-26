@@ -6,44 +6,75 @@ const char* ssid = "BASE1_2G";
 const char* password = "LB@AH@base1PS!";
 
 WebServer server(80);
+
 const char* otaUser = "admin";
 const char* otaPass = "1234";
 
 void setup() {
   Serial.begin(115200);
+
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(400);
     Serial.print(".");
   }
-  Serial.println("\nWiFi connected! IP: " + WiFi.localIP().toString());
 
+  Serial.println("\nWiFi connected!");
+  Serial.println("IP Address: " + WiFi.localIP().toString());
+
+  // --- OTA Page ---
   server.on("/", HTTP_GET, []() {
-    if (!server.authenticate(otaUser, otaPass)) return server.requestAuthentication();
-    server.send(200, "text/html",
+    if (!server.authenticate(otaUser, otaPass))
+      return server.requestAuthentication();
+
+    String html =
+      "<html><body>"
+      "<h2>ESP32 Web OTA Update</h2>"
       "<form method='POST' action='/update' enctype='multipart/form-data'>"
       "<input type='file' name='firmware'>"
-      "<input type='submit' value='Update'>"
+      "<input type='submit' value='Update Firmware'>"
       "</form>"
-    );
+      "</body></html>";
+
+    server.send(200, "text/html", html);
   });
 
-  server.on("/update", HTTP_POST, []() { server.send(200); }, []() {
-    HTTPUpload& upload = server.upload();
-    if (upload.status == UPLOAD_FILE_START) {
-      Serial.println("Update Start: " + upload.filename);
-      Update.begin(UPDATE_SIZE_UNKNOWN);
-    } else if (upload.status == UPLOAD_FILE_WRITE) {
-      Update.write(upload.buf, upload.currentSize);
-    } else if (upload.status == UPLOAD_FILE_END) {
-      Update.end(true);
-      Serial.println("Update Success! Rebooting...");
-      ESP.restart();
+  // --- OTA Update Handler ---
+  server.on("/update", HTTP_POST,
+    []() { 
+      server.send(200, "text/plain", "Update complete. ESP restarting...");
+    },
+    []() {
+      HTTPUpload& upload = server.upload();
+
+      if (upload.status == UPLOAD_FILE_START) {
+        Serial.printf("Update Start: %s\n", upload.filename.c_str());
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+          Update.printError(Serial);
+        }
+      }
+      else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+          Update.printError(Serial);
+        }
+      }
+      else if (upload.status == UPLOAD_FILE_END) {
+        if (Update.end(true)) {
+          Serial.println("Update finished. Rebooting...");
+        } else {
+          Update.printError(Serial);
+        }
+        ESP.restart();
+      }
     }
-  });
+  );
 
   server.begin();
-  Serial.println("OTA ready at IP: " + WiFi.localIP().toString());
+  Serial.println("OTA server started.");
+  Serial.print("Open in browser: http://");
+  Serial.println(WiFi.localIP());
 }
 
 void loop() {
